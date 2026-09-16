@@ -1,0 +1,36 @@
+name: Create Kubernetes Namespace
+
+on:
+  workflow_dispatch:
+    inputs:
+      namespace_name:
+        description: "Name of the namespace to create"
+        required: true
+        type: string
+
+jobs:
+  create-namespace:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Kubernetes Python client
+        run: pip install kubernetes
+
+      - name: Create kubeconfig
+        run: |
+          echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 --decode > "$RUNNER_TEMP/kubeconfig"
+          chmod 600 "$RUNNER_TEMP/kubeconfig"
+
+      - name: Create namespace
+        env:
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig
+          NAMESPACE_NAME: ${{ inputs.namespace_name }}
+        run: python namespace-creator.py
