@@ -53,22 +53,23 @@ def core_dns_check(pod: Pod) -> str:
 
     return metrics_to_file
 
-def cluster_ip_check(pod: Pod):
-    metrics_to_file = (
-            f'network_checker{{test="cluster_api_check", '
-            f'node_name="{pod.node_name}", name="{pod.name}"}}'
+def cluster_ip_check(pod: Pod) -> str:
+    metric = (
+        f'network_checker{{test="cluster_api_check", '
+        f'node_name="{pod.node_name}", name="{pod.name}"}}'
     )
-    port = 443
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(3.0)
+    host = os.environ.get("KUBERNETES_SERVICE_HOST")
+    if not host:
+        return f"{metric} 0"
+
     try:
-        ret = sock.connect_ex((DOMAIN, port))
-        if ret == 0:
-            metrics_to_file += "1"
-        else:
-            metrics_to_file += "0"
-    except socket.gaierror:
-        metrics_to_file += "0"
+        with socket.create_connection((host, 443), timeout=3.0):
+            return f"{metric} 1"
+    except OSError:
+        return f"{metric} 0"
+
+
+
 
 
 
