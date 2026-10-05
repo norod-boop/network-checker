@@ -7,5 +7,5 @@ resources:
 
 images:
   - name: network-checker
-    newName: ghcr.io/norod-boop/k8s-network-checker
+    newName: ghcr.io/norod-boop/network-checker
     newTag: latest
