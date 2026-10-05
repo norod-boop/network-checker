@@ -10,7 +10,7 @@ The checker writes Prometheus-compatible metrics to `/tmp/metrics.prom`:
 - `network_checker{test="cluster_api_check", ...}` checks TCP connectivity to the Kubernetes API on port `443`.
 - `network_checker{test="container_communication_check", ...}` pings each pod IP from the checker pod.
 
-The metric value is `1` for success and `0` for failure. Logs are written to standard output and include discovery, check, write, and shutdown events.
+The metric value is `1` for success and `0` for failure. Logs are written to standard output and include discovery, check, write, and shutdown events. Checks repeat every 60 seconds by default.
 
 ## Configuration
 
@@ -21,6 +21,8 @@ NAMESPACE_NAME=my-namespace
 ```
 
 `NAMESPACE_NAME` defaults to `default` in the Docker image. `POD_IP` should contain the checker pod's IP so it can be selected as the source pod.
+
+Optional environment variables are `CHECK_INTERVAL_SECONDS` and `KUBERNETES_DNS_NAME`. The latter defaults to `kubernetes.svc.cluster.local`.
 
 ## Docker
 
@@ -35,28 +37,48 @@ docker run --rm \
 
 The container uses an exec-form entrypoint, allowing Docker and Kubernetes to deliver `SIGTERM` to the Python process. The checker handles that signal and exits cleanly.
 
+## Kubernetes Deployment
+
+`k8s/` is a Kustomize application defining the Deployment, ServiceAccount, least-privilege Role/RoleBinding, Service, and metrics sidecar. Set the repository owner and image tag in `k8s/kustomization.yaml`, then apply it with:
+
+```bash
+kubectl apply -k k8s/
+```
+
+The committed Kustomize namespace is `network-checker`. Change `namespace` in `k8s/kustomization.yaml` and the `destination.namespace` in `argocd/application.yaml` together when using another namespace. The checker receives its actual namespace from the Kubernetes downward API.
+
+The checker and an NGINX sidecar share an `emptyDir` volume. The checker atomically writes `/tmp/metrics.prom`; NGINX serves the same file at `/metrics.prom` on port `8080`, which the Service exposes for Prometheus. The checker health and readiness endpoints use port `8081`.
+
+For a private image, set `imagePullSecrets` in the manifest to an existing registry secret. The deployment adds `NET_RAW` because the ping check needs ICMP raw sockets; clusters enforcing restricted Pod Security must explicitly allow this capability for the namespace or workload.
+
 ## GitHub Actions
 
 `.github/workflows/create-namespace.yml` is manually triggered with a `namespace_name` input. It creates that namespace using the Kubernetes configuration stored in the `KUBE_CONFIG_DATA` secret.
 
-The workflow currently does not build or push the Docker image and does not deploy the checker. The namespace input therefore affects namespace creation only until a deployment workflow is added.
+The namespace creation workflow is separate from deployment. Argo CD should be used for continuous synchronization.
+
+## Argo CD
+
+For a private GitHub repository, add repository credentials to Argo CD using the Argo CD UI or CLI. Do not commit the token:
+
+```bash
+argocd repo add https://github.com/OWNER/k8s-network-checker.git \
+	--username YOUR_GITHUB_USERNAME \
+	--password YOUR_GITHUB_TOKEN
+```
+
+Replace `REPLACE_ME` in `argocd/application.yaml` and `k8s/kustomization.yaml`, commit the changes, and apply the Application from a machine with access to the Argo CD cluster:
+
+```bash
+kubectl apply -f argocd/application.yaml
+```
+
+The Application uses `CreateNamespace=true`, syncs the `k8s` directory, and enables pruning and self-healing. For a private container image, create an image pull secret in the target namespace and add its name under `spec.template.spec.imagePullSecrets` in `k8s/checker.yaml` (or manage that patch with a Kustomize overlay).
 
 ## Required Kubernetes Permissions
 
 The checker needs a service account with permission to list pods in the target namespace. A restricted cluster may also require permission to use ICMP raw sockets for the `ping` check.
 
-## TODO
+## Operational Notes
 
-- Add a Kubernetes Deployment or DaemonSet for the checker.
-- Create a ServiceAccount and least-privilege Role/RoleBinding for listing pods.
-- Pass the workflow's `namespace_name` input into the checker Deployment as `NAMESPACE_NAME`.
-- Build and push the image to a container registry, such as GHCR.
-- Add image pull configuration for private registries if needed.
-- Decide how `/tmp/metrics.prom` will be exposed to Prometheus.
-- Add a metrics HTTP endpoint or a shared volume plus a textfile collector.
-- Run the checks repeatedly instead of only once per container start.
-- Add readiness, liveness, and graceful shutdown configuration.
-- Add tests for DNS failures, API failures, missing pod IPs, ping failures, and SIGTERM handling.
-- Escape metric label values before writing Prometheus text format.
-- Replace the hard-coded Kubernetes DNS name with a configurable value if required.
-- Verify the required `NET_RAW` capability under the cluster's Pod Security settings.
+Metric label values are escaped for Prometheus text format. SIGTERM stops the check loop and shuts down the health server cleanly. Prometheus must be configured to discover the `network-checker` Service, or the annotations can be used with a Prometheus installation that supports annotation-based scraping.

@@ -1,0 +1,141 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: network-checker
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: network-checker
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: network-checker
+subjects:
+  - kind: ServiceAccount
+    name: network-checker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: network-checker
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: network-checker
+  labels:
+    app: network-checker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: network-checker
+  template:
+    metadata:
+      labels:
+        app: network-checker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics.prom
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: network-checker
+      terminationGracePeriodSeconds: 15
+      # For a private registry, replace [] with: [{name: your-registry-secret}]
+      imagePullSecrets: []
+      containers:
+        - name: network-checker
+          image: network-checker:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NAMESPACE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: CHECK_INTERVAL_SECONDS
+              value: "60"
+          ports:
+            - name: health
+              containerPort: 8081
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              add: ["NET_RAW"]
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: metrics
+              mountPath: /tmp
+        - name: metrics-sidecar
+          image: nginx:1.27-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /metrics.prom
+              port: metrics
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /metrics.prom
+              port: metrics
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+          volumeMounts:
+            - name: metrics
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+      volumes:
+        - name: metrics
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: network-checker
+  labels:
+    app: network-checker
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: /metrics.prom
+    prometheus.io/port: "8080"
+spec:
+  selector:
+    app: network-checker
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics
