@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 METRICS_FILE = "/tmp/metrics.prom"
 DEFAULT_DOMAIN = "kubernetes.svc.cluster.local"
 DEFAULT_CHECK_INTERVAL = 60
-METRICS_PORT = 8081
+HEALTH_PORT = 8081
 shutdown_event = threading.Event()
 ready_event = threading.Event()
 v1 = None
@@ -169,20 +169,11 @@ def handle_shutdown(signum, frame) -> None:
     shutdown_event.set()
 
 
-class MetricsHandler(BaseHTTPRequestHandler):
+class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/metrics":
-            try:
-                with open(METRICS_FILE, encoding="utf-8") as metrics_file:
-                    body = metrics_file.read().encode("utf-8")
-            except FileNotFoundError:
-                body = b""
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; version=0.0.4")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        elif self.path == "/healthz" or self.path == "/readyz" and ready_event.is_set():
+        if self.path == "/healthz" or (
+            self.path == "/readyz" and ready_event.is_set()
+        ):
             self.send_response(200)
             self.end_headers()
         else:
@@ -193,8 +184,8 @@ class MetricsHandler(BaseHTTPRequestHandler):
         return
 
 
-def start_metrics_server() -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer(("0.0.0.0", METRICS_PORT), MetricsHandler)
+def start_health_server() -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer(("0.0.0.0", HEALTH_PORT), HealthHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
@@ -219,9 +210,19 @@ def main():
     signal.signal(signal.SIGINT, handle_shutdown)
     logger.info("Starting network checker")
     namespace = os.environ.get("NAMESPACE_NAME", "default")
-    interval = max(1, int(os.environ.get("CHECK_INTERVAL_SECONDS", DEFAULT_CHECK_INTERVAL)))
+    try:
+        interval = max(
+            1,
+            int(os.environ.get("CHECK_INTERVAL_SECONDS", DEFAULT_CHECK_INTERVAL)),
+        )
+    except ValueError:
+        logger.warning(
+            "Invalid CHECK_INTERVAL_SECONDS value; using %d seconds",
+            DEFAULT_CHECK_INTERVAL,
+        )
+        interval = DEFAULT_CHECK_INTERVAL
     load_kubernetes_client()
-    server = start_metrics_server()
+    server = start_health_server()
     try:
         while not shutdown_event.is_set():
             run_check(namespace)

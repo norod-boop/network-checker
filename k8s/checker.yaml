@@ -24,6 +24,35 @@ roleRef:
   kind: Role
   name: network-checker
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: network-checker-pusher
+data:
+  PUSHGATEWAY_URL: "http://pushgateway.monitoring.svc.cluster.local:9091"
+  PUSH_INTERVAL_SECONDS: "60"
+  push.sh: |
+    #!/bin/sh
+    set -eu
+
+    interval="${PUSH_INTERVAL_SECONDS:-60}"
+    url="${PUSHGATEWAY_URL%/}/metrics/job/network-checker/namespace/${NAMESPACE_NAME}"
+
+    while true; do
+      if [ -s /tmp/metrics.prom ]; then
+        if curl --fail --silent --show-error \
+          --header "Content-Type: text/plain; version=0.0.4" \
+          --data-binary @/tmp/metrics.prom "$url"; then
+          echo "Pushed metrics to $url"
+        else
+          echo "Failed to push metrics to $url" >&2
+        fi
+      else
+        echo "Waiting for metrics.prom" >&2
+      fi
+      sleep "$interval"
+    done
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -39,15 +68,9 @@ spec:
     metadata:
       labels:
         app: network-checker
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/path: /metrics.prom
-        prometheus.io/port: "8080"
     spec:
       serviceAccountName: network-checker
       terminationGracePeriodSeconds: 15
-      # For a private registry, replace [] with: [{name: your-registry-secret}]
-      imagePullSecrets: []
       containers:
         - name: network-checker
           image: network-checker:latest
@@ -91,22 +114,25 @@ spec:
           volumeMounts:
             - name: metrics
               mountPath: /tmp
-        - name: metrics-sidecar
-          image: nginx:1.27-alpine
+        - name: metrics-pusher
+          image: curlimages/curl:8.12.1
           imagePullPolicy: IfNotPresent
-          ports:
-            - name: metrics
-              containerPort: 8080
-          readinessProbe:
-            httpGet:
-              path: /metrics.prom
-              port: metrics
-            periodSeconds: 5
-          livenessProbe:
-            httpGet:
-              path: /metrics.prom
-              port: metrics
-            periodSeconds: 10
+          command: ["/bin/sh", "/config/push.sh"]
+          env:
+            - name: NAMESPACE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PUSHGATEWAY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: network-checker-pusher
+                  key: PUSHGATEWAY_URL
+            - name: PUSH_INTERVAL_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: network-checker-pusher
+                  key: PUSH_INTERVAL_SECONDS
           resources:
             requests:
               cpu: 5m
@@ -116,26 +142,14 @@ spec:
               memory: 64Mi
           volumeMounts:
             - name: metrics
-              mountPath: /usr/share/nginx/html
+              mountPath: /tmp
+              readOnly: true
+            - name: pusher-config
+              mountPath: /config
               readOnly: true
       volumes:
         - name: metrics
           emptyDir: {}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: network-checker
-  labels:
-    app: network-checker
-  annotations:
-    prometheus.io/scrape: "true"
-    prometheus.io/path: /metrics.prom
-    prometheus.io/port: "8080"
-spec:
-  selector:
-    app: network-checker
-  ports:
-    - name: metrics
-      port: 8080
-      targetPort: metrics
+        - name: pusher-config
+          configMap:
+            name: network-checker-pusher
