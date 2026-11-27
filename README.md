@@ -22,20 +22,30 @@ Prometheus-compatible metrics to Pushgateway.
 
 ```mermaid
 flowchart LR
-    Checker["Python checker"]
+    ArgoCD["Argo CD"]
+    Kustomize["Kustomize"]
+    Deployment["Network Checker Deployment"]
+
+    Checker["Python Checker"]
     API["Kubernetes API"]
     DNS["Kubernetes DNS"]
     Pods["Other Pods"]
     Metrics[("/tmp/metrics.prom")]
-    Pusher["Curl sidecar"]
+    Pusher["Metrics Pusher Sidecar"]
     Pushgateway["Prometheus Pushgateway"]
+    Prometheus["Prometheus"]
 
+    ArgoCD -->|"syncs k8s/"| Kustomize
+    Kustomize -->|"creates"| Deployment
+    Deployment --> Checker
+    Deployment --> Pusher
     Checker -->|"list pods"| API
     Checker -->|"resolve service DNS"| DNS
     Checker -->|"ping / ICMP"| Pods
     Checker -->|"atomic file write"| Metrics
     Metrics -->|"read"| Pusher
     Pusher -->|"HTTP push"| Pushgateway
+    Prometheus -->|"scrapes"| Pushgateway
 ```
 
 The two containers share an `emptyDir` volume mounted at `/tmp`. The checker
@@ -81,7 +91,7 @@ Label values are escaped for the Prometheus text format.
 - `network-checker.py` discovers pods and executes the checks.
 - `test_network_checker.py` validates metric handling and Kubernetes client behavior.
 - `k8s/checker.yaml` contains the workload, RBAC, and Pushgateway pusher.
-- `k8s/kustomization.yaml` defines the namespace and container image.
+- `k8s/kustomization.yaml` defines the target namespace.
 - `argocd/application.yaml` defines the Argo CD application.
 
 ## How It Works
@@ -156,7 +166,7 @@ the `NET_RAW` capability.
 ## Kubernetes Deployment
 
 1. Ensure the Pushgateway endpoint in `k8s/checker.yaml` is reachable.
-2. Confirm the image name in `k8s/kustomization.yaml`.
+2. Confirm the checker image in `k8s/checker.yaml`.
 3. Deploy with Kustomize:
 
 ```bash
@@ -171,9 +181,8 @@ kubectl -n network-checker logs deployment/network-checker -c network-checker
 kubectl -n network-checker logs deployment/network-checker -c metrics-pusher
 ```
 
-The namespace and image are centralized in `k8s/kustomization.yaml`. If the
-namespace is changed, update `destination.namespace` in
-`argocd/application.yaml` as well.
+The target namespace is defined in `k8s/kustomization.yaml`. If it is changed,
+update `destination.namespace` in `argocd/application.yaml` as well.
 
 ## Argo CD Deployment
 
@@ -218,6 +227,9 @@ python3 -m py_compile network-checker.py test_network_checker.py
 
 No Kubernetes cluster is required for these unit tests. Full network behavior,
 RBAC, probes, and Pushgateway delivery require a running cluster.
+
+GitHub Actions also validates Python syntax, unit tests, YAML parsing, and the
+Docker image build on pushes and pull requests.
 
 ## Security
 

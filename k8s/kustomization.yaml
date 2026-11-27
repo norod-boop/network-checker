@@ -4,8 +4,3 @@ namespace: network-checker
 
 resources:
   - checker.yaml
-
-images:
-  - name: network-checker
-    newName: ghcr.io/norod-boop/network-checker
-    newTag: latest

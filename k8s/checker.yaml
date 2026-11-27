@@ -41,6 +41,7 @@ data:
     while true; do
       if [ -s /tmp/metrics.prom ]; then
         if curl --fail --silent --show-error \
+          --request PUT \
           --header "Content-Type: text/plain; version=0.0.4" \
           --data-binary @/tmp/metrics.prom "$url"; then
           echo "Pushed metrics to $url"
@@ -73,7 +74,7 @@ spec:
       terminationGracePeriodSeconds: 15
       containers:
         - name: network-checker
-          image: network-checker:latest
+          image: ghcr.io/norod-boop/network-checker:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: NAMESPACE_NAME

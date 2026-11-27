@@ -4,8 +4,10 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+COPY requirements.txt .
+
 RUN apk add --no-cache iputils \
-    && pip install --no-cache-dir kubernetes
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY network-checker.py .
 
