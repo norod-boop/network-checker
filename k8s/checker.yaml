@@ -74,8 +74,8 @@ spec:
       terminationGracePeriodSeconds: 15
       containers:
         - name: network-checker
-          image: ghcr.io/norod-boop/network-checker:latest
-          imagePullPolicy: IfNotPresent
+          image: network-checker:latest
+          imagePullPolicy: Never
           env:
             - name: NAMESPACE_NAME
               valueFrom:

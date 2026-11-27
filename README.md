@@ -165,9 +165,35 @@ the `NET_RAW` capability.
 
 ## Kubernetes Deployment
 
-1. Ensure the Pushgateway endpoint in `k8s/checker.yaml` is reachable.
-2. Confirm the checker image in `k8s/checker.yaml`.
-3. Deploy with Kustomize:
+The checker image is not published to a container registry. Build it locally and
+make it available to every Kubernetes node that may run the Deployment. The
+manifest uses `imagePullPolicy: Never`, so Kubernetes will not try to download
+the checker image.
+
+Build the image:
+
+```bash
+docker build -t network-checker:latest .
+```
+
+For a `kind` cluster, load it into the cluster:
+
+```bash
+kind load docker-image network-checker:latest
+```
+
+For a `minikube` cluster:
+
+```bash
+minikube image load network-checker:latest
+```
+
+For other clusters, use the cluster's supported method to distribute the image
+to its nodes before creating the Deployment. Argo CD does not build or transfer
+container images.
+
+Then ensure the Pushgateway endpoint in `k8s/checker.yaml` is reachable and
+deploy with Kustomize:
 
 ```bash
 kubectl apply -k k8s/
@@ -203,18 +229,13 @@ Never commit Argo CD repository credentials or Kubernetes secrets.
 
 ## Container Image
 
-The image is an Alpine-based Python image with `iputils` and the Kubernetes
-Python client.
+The locally built image is named `network-checker:latest`. It is based on
+Alpine, includes `iputils` and the Kubernetes Python client, and requires
+in-cluster service-account credentials. The image is not uploaded to GHCR or
+another registry.
 
-```text
-ghcr.io/norod-boop/network-checker
-```
-
-It is designed exclusively for Kubernetes execution and requires in-cluster
-service-account credentials.
-
-For a private image, configure `spec.template.spec.imagePullSecrets` in the
-Deployment or through a Kustomize overlay.
+The `metrics-pusher` sidecar uses the public `curlimages/curl:8.12.1` image.
+Nodes need access to its registry unless that image is also preloaded locally.
 
 ## Local Validation
 
