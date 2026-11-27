@@ -16,7 +16,7 @@ Prometheus-compatible metrics to Pushgateway.
 - Pushgateway metric delivery through a sidecar
 - Kubernetes liveness and readiness probes
 - Kustomize and Argo CD deployment support
-- Container image workflow designed for GHCR/Kubernetes workloads
+- Docker image build validation in GitHub Actions
 
 ## Architecture
 
